@@ -147,7 +147,7 @@ jobs:
           if ! gh release view "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --repo "$RELEASE_REPOSITORY" \
-              --title "llmpro $RELEASE_TAG" \
+              --title "LLM Code $RELEASE_TAG" \
               --generate-notes
           fi
           gh release upload "$RELEASE_TAG" dist/* --clobber --repo "$RELEASE_REPOSITORY"

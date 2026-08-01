@@ -1,4 +1,4 @@
-# llmpro releases
+# LLM Code releases
 
 This repository contains only GitHub Actions release automation and published installers. Source code remains in the private `opencode-llmcenter` repository.
 
