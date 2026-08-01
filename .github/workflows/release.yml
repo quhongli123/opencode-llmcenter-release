@@ -93,6 +93,7 @@ jobs:
       - name: Build desktop
         working-directory: source/packages/desktop
         env:
+          NODE_OPTIONS: --max-old-space-size=8192
           OPENCODE_VERSION: ${{ needs.validate.outputs.version }}
           OPENCODE_CHANNEL: prod
           OPENCODE_UPDATE_REPOSITORY: ${{ github.repository }}
