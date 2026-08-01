@@ -1,0 +1,152 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repository:
+        description: "Private source repository"
+        required: true
+      source_ref:
+        description: "Private source branch or tag"
+        required: true
+      release_tag:
+        description: "Release tag, for example v1.2.3"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - id: version
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release_tag must be vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            target: --mac
+            artifact: macos
+          - runner: windows-latest
+            target: --win
+            artifact: windows
+          - runner: ubuntu-24.04
+            target: --linux
+            artifact: linux
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout private source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: ${{ inputs.source_repository }}
+          ref: ${{ inputs.source_ref }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          path: source
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: source/package.json
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm
+
+      - name: Install dependencies
+        working-directory: source
+        run: bun install --frozen-lockfile
+
+      - name: Prepare desktop
+        working-directory: source/packages/desktop
+        env:
+          OPENCODE_VERSION: ${{ needs.validate.outputs.version }}
+          OPENCODE_CHANNEL: prod
+          OPENCODE_UPDATE_REPOSITORY: ${{ github.repository }}
+          OPENCODE_NOTARIZE: "false"
+        run: bun ./scripts/prepare.ts
+
+      - name: Build desktop
+        working-directory: source/packages/desktop
+        env:
+          OPENCODE_VERSION: ${{ needs.validate.outputs.version }}
+          OPENCODE_CHANNEL: prod
+          OPENCODE_UPDATE_REPOSITORY: ${{ github.repository }}
+          OPENCODE_NOTARIZE: "false"
+        run: bun run build
+
+      - name: Package desktop
+        working-directory: source/packages/desktop
+        env:
+          OPENCODE_VERSION: ${{ needs.validate.outputs.version }}
+          OPENCODE_CHANNEL: prod
+          OPENCODE_UPDATE_REPOSITORY: ${{ github.repository }}
+          OPENCODE_NOTARIZE: "false"
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: bunx electron-builder ${{ matrix.target }} --publish never --config electron-builder.config.ts
+
+      - name: Upload installers
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            source/packages/desktop/dist/*.dmg
+            source/packages/desktop/dist/*.zip
+            source/packages/desktop/dist/*.exe
+            source/packages/desktop/dist/*.blockmap
+            source/packages/desktop/dist/*.AppImage
+            source/packages/desktop/dist/*.deb
+            source/packages/desktop/dist/*.rpm
+            source/packages/desktop/dist/latest*.yml
+
+  publish:
+    needs:
+      - validate
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: desktop-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --repo "$RELEASE_REPOSITORY" \
+              --title "OpenCode llm-center $RELEASE_TAG" \
+              --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber --repo "$RELEASE_REPOSITORY"
