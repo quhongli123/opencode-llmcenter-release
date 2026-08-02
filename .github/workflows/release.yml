@@ -127,7 +127,6 @@ jobs:
             source/packages/desktop/dist/*.dmg
             source/packages/desktop/dist/*.zip
             source/packages/desktop/dist/*.exe
-            source/packages/desktop/dist/*.blockmap
             source/packages/desktop/dist/*.AppImage
             source/packages/desktop/dist/*.deb
             source/packages/desktop/dist/*.rpm
