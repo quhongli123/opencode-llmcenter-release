@@ -66,6 +66,22 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Verify Apple signing configuration
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_PATH APPLE_API_KEY APPLE_API_ISSUER; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required macOS signing secret: $name"
+              exit 1
+            fi
+          done
+
       - uses: apple-actions/import-codesign-certs@8f3fb608891dd2244cdab3d69cd68c0d37a7fe93 # v2.0.0
         if: runner.os == 'macOS'
         with:
