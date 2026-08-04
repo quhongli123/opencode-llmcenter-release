@@ -66,8 +66,9 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Verify Apple signing configuration
+      - name: Detect Apple signing configuration
         if: runner.os == 'macOS'
+        id: apple-signing
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -75,22 +76,28 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_PATH APPLE_API_KEY APPLE_API_ISSUER; do
-            if [[ -z "${!name}" ]]; then
-              echo "Missing required macOS signing secret: $name"
-              exit 1
-            fi
-          done
+          if [[ -n "$APPLE_CERTIFICATE" \
+            && -n "$APPLE_CERTIFICATE_PASSWORD" \
+            && -n "$APPLE_API_KEY_PATH" \
+            && -n "$APPLE_API_KEY" \
+            && -n "$APPLE_API_ISSUER" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Apple signing is enabled"
+            exit 0
+          fi
+
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          echo "Apple signing secrets are not configured; building unsigned macOS artifacts"
 
       - uses: apple-actions/import-codesign-certs@8f3fb608891dd2244cdab3d69cd68c0d37a7fe93 # v2.0.0
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.apple-signing.outputs.enabled == 'true'
         with:
           keychain: build
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
           p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
       - name: Setup Apple API Key
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.apple-signing.outputs.enabled == 'true'
         run: echo "${{ secrets.APPLE_API_KEY_PATH }}" > $RUNNER_TEMP/apple-api-key.p8
 
       - name: Setup Bun
@@ -114,6 +121,7 @@ jobs:
           OPENCODE_VERSION: ${{ needs.validate.outputs.version }}
           OPENCODE_CHANNEL: prod
           OPENCODE_UPDATE_REPOSITORY: ${{ github.repository }}
+          OPENCODE_NOTARIZE: ${{ (runner.os == 'macOS' && steps.apple-signing.outputs.enabled != 'true') && 'false' || '' }}
         run: bun ./scripts/prepare.ts
 
       - name: Build desktop
@@ -123,9 +131,11 @@ jobs:
           OPENCODE_VERSION: ${{ needs.validate.outputs.version }}
           OPENCODE_CHANNEL: prod
           OPENCODE_UPDATE_REPOSITORY: ${{ github.repository }}
+          OPENCODE_NOTARIZE: ${{ (runner.os == 'macOS' && steps.apple-signing.outputs.enabled != 'true') && 'false' || '' }}
         run: bun run build
 
-      - name: Package desktop
+      - name: Package desktop (signed or non-macOS)
+        if: runner.os != 'macOS' || steps.apple-signing.outputs.enabled == 'true'
         working-directory: source/packages/desktop
         env:
           OPENCODE_VERSION: ${{ needs.validate.outputs.version }}
@@ -138,8 +148,18 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: bunx electron-builder ${{ matrix.target }} --publish never --config electron-builder.config.ts
 
+      - name: Package desktop (unsigned macOS)
+        if: runner.os == 'macOS' && steps.apple-signing.outputs.enabled != 'true'
+        working-directory: source/packages/desktop
+        env:
+          OPENCODE_VERSION: ${{ needs.validate.outputs.version }}
+          OPENCODE_CHANNEL: prod
+          OPENCODE_UPDATE_REPOSITORY: ${{ github.repository }}
+          OPENCODE_NOTARIZE: "false"
+        run: bunx electron-builder ${{ matrix.target }} --publish never --config electron-builder.config.ts
+
       - name: Verify macOS app signature
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.apple-signing.outputs.enabled == 'true'
         working-directory: source/packages/desktop
         run: |
           app="$(find dist -maxdepth 2 -type d -name '*.app' -print -quit)"
